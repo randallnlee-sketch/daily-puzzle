@@ -24,7 +24,7 @@
         </div>
       </section>
 
-      <section id="game-card" class="card" aria-live="polite">
+      <section id="game-card" class="card hidden" aria-live="polite">
         <div id="board" class="board" aria-label="Word puzzle board"></div>
         <p id="message" class="message"></p>
         <div id="game-keyboard" class="game-keyboard" aria-label="Word puzzle keyboard"></div>
@@ -37,6 +37,11 @@
         <p id="result-copy"></p>
         <div id="stats" class="stats"></div>
         <button id="play-again" class="secondary">View the board</button>
+        <button id="other-games-button" class="secondary" type="button">View other completed games</button>
+        <section id="other-games" class="other-games hidden">
+          <h3>Other completed games</h3>
+          <div id="other-boards"></div>
+        </section>
       </section>
     </main>
     <script type="module" src="app.js"></script>

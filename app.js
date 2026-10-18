@@ -4,14 +4,14 @@ const supabase = createClient("https://pguyhknljcrnwoidhlzp.supabase.co", "sb_pu
 const $ = (selector) => document.querySelector(selector);
 const keyboardRows = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 const puzzleWords = new Set("xylyl glyph nymph kudzu whomp whoop mooch foggy zippy piezo phono poppy knock chomp gonzo jumpy fjord whizz psych kazoo slunk stank tacky wacky bawdy cliff bongo mambo kabob hokum hooch goofy chunk prawn funky fungi feign gnome bugle bundt pylon rotor bogus mogul nexus emcee cajun blood cajon axiom cacti eerie azure frown thumb quiet quite boxer clown zebra moxie toxic motif shoed lunch vault guide scalp chair fight rough rogue helix tenor essay gamma vexed party neigh eight marsh cache moist posit evade tread adder melee penal cease orate snipe plait shirt worst horse usual empty apply gleek sitar cower waste".split(" "));
-const playerId = localStorage.playerId || crypto.randomUUID();
+const legacyPlayerId = localStorage.playerId;
+let playerId;
 let puzzle;
 let currentRows = [];
 let activeGuess = "";
 let availablePuzzles = [];
 let validWords = new Set();
 let dictionaryReady = false;
-localStorage.playerId = playerId;
 
 function letterStates(rows = []) {
   const rank = { absent: 1, present: 2, correct: 3 };
@@ -22,13 +22,15 @@ function letterStates(rows = []) {
   }));
   return states;
 }
-function drawBoard() {
-  $("#board").innerHTML = Array.from({ length: 6 }, (_, row) => {
-    const guess = currentRows[row]?.guess || (row === currentRows.length ? activeGuess : "");
-    const feedback = currentRows[row]?.feedback || [];
+function boardRowsMarkup(rows, editable = false) {
+  return Array.from({ length: 6 }, (_, row) => {
+    const guess = rows[row]?.guess || (editable && row === currentRows.length ? activeGuess : "");
+    const feedback = rows[row]?.feedback || [];
     return `<div class="row">${Array.from({ length: 5 }, (_, col) => `<span class="tile ${feedback[col] || ""}">${guess[col] || ""}</span>`).join("")}</div>`;
   }).join("");
 }
+function boardMarkup(rows, className = "board") { return `<div class="${className}">${boardRowsMarkup(rows)}</div>`; }
+function drawBoard() { $("#board").innerHTML = boardRowsMarkup(currentRows, true); }
 function drawKeyboard() {
   const states = letterStates(currentRows);
   const row = (letters) => [...letters].map((letter) => `<button type="button" class="key ${states.get(letter) || ""}" data-key="${letter}">${letter}</button>`).join("");
@@ -43,13 +45,20 @@ async function loadDictionary() {
     const response = await fetch("valid-words.txt");
     if (!response.ok) throw new Error("Dictionary unavailable");
     validWords = new Set((await response.text()).split(/\r?\n/).map((word) => word.trim().toLowerCase()).filter(Boolean));
-    puzzleWords.forEach((word) => validWords.add(word));
-    dictionaryReady = true;
-  } catch {
-    showMessage("The word list could not load. Please refresh and try again.", true);
-  }
+    puzzleWords.forEach((word) => validWords.add(word)); dictionaryReady = true;
+  } catch { showMessage("The word list could not load. Please refresh and try again.", true); }
 }
-
+async function authenticate() {
+  let { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    const { data, error } = await supabase.auth.signInAnonymously();
+    if (error) throw error;
+    session = data.session;
+  }
+  playerId = session.user.id;
+  if (legacyPlayerId && legacyPlayerId !== playerId) await supabase.rpc("claim_legacy_games", { p_legacy_player_id: legacyPlayerId });
+  localStorage.playerId = playerId;
+}
 async function loadAvailablePuzzles() {
   const { data } = await supabase.rpc("get_available_puzzles");
   availablePuzzles = data || [];
@@ -59,7 +68,7 @@ async function loadAvailablePuzzles() {
 async function activatePuzzle(nextPuzzle) {
   puzzle = nextPuzzle; currentRows = []; activeGuess = "";
   $("#subtitle").textContent = localDate(puzzle.puzzle_date);
-  $("#results-card").classList.add("hidden"); $("#game-keyboard").classList.remove("hidden"); $(".keyboard-note").classList.remove("hidden"); showMessage(""); redraw();
+  $("#game-card").classList.remove("hidden"); $("#results-card").classList.add("hidden"); $("#game-keyboard").classList.remove("hidden"); $(".keyboard-note").classList.remove("hidden"); $("#other-games").classList.add("hidden"); showMessage(""); redraw();
   const { data } = await supabase.rpc("get_player_game", { p_puzzle_id:puzzle.id, p_player_id:playerId });
   const savedGame = data?.[0];
   if (!savedGame) return;
@@ -96,24 +105,34 @@ function useKey(key) {
   if (key === "backspace") { activeGuess = activeGuess.slice(0, -1); showMessage(""); return drawBoard(); }
   if (activeGuess.length < 5) { activeGuess += key; showMessage(""); drawBoard(); }
 }
+async function showResults(result) {
+  $("#results-card").classList.remove("hidden");
+  $("#result-heading").textContent = result.state === "won" ? "You got it!" : `The word was ${result.answer.toUpperCase()}.`;
+  $("#result-copy").textContent = result.state === "won" ? `Solved in ${result.guess_count} guess${result.guess_count === 1 ? "" : "es"}.` : "Try another day’s puzzle whenever you like.";
+  const { data } = await supabase.rpc("get_puzzle_stats", { p_puzzle_id:puzzle.id }); const stats = data?.[0] || {};
+  $("#stats").innerHTML = [[stats.players || 0,"players"],[stats.solved || 0,"solved"],[stats.average_guesses || "—","avg. guesses"]].map(([value,label]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join("");
+}
+async function loadOtherGames() {
+  const button = $("#other-games-button"); button.disabled = true;
+  const { data, error } = await supabase.rpc("get_completed_boards", { p_puzzle_id:puzzle.id }); button.disabled = false;
+  if (error) return;
+  $("#other-boards").innerHTML = data?.length
+    ? data.map((game) => `<article class="shared-game"><p>${game.state === "won" ? `Solved in ${game.guess_count} guess${game.guess_count === 1 ? "" : "es"}` : "Did not solve"}</p>${boardMarkup(game.rows, "shared-board")}</article>`).join("")
+    : `<p class="empty-boards">No other completed games yet.</p>`;
+  $("#other-games").classList.remove("hidden");
+}
 $("#game-keyboard").addEventListener("click", (event) => { const key = event.target.closest("button")?.dataset.key; if (key) useKey(key); });
 document.addEventListener("keydown", (event) => {
   if ($("#game-keyboard").classList.contains("hidden") || event.metaKey || event.ctrlKey || event.altKey) return;
-  if (/^[a-zA-Z]$/.test(event.key)) useKey(event.key.toLowerCase());
-  else if (event.key === "Backspace") useKey("backspace");
-  else if (event.key === "Enter") useKey("enter");
+  if (/^[a-zA-Z]$/.test(event.key)) useKey(event.key.toLowerCase()); else if (event.key === "Backspace") useKey("backspace"); else if (event.key === "Enter") useKey("enter");
 });
 $("#archive-toggle").addEventListener("click", () => $("#archive-panel").classList.toggle("hidden"));
 $("#date-button").addEventListener("click", () => { const date = $("#puzzle-date").value; if (date) loadDate(date); });
 $("#random-button").addEventListener("click", () => { if (availablePuzzles.length) loadDate(availablePuzzles[Math.floor(Math.random() * availablePuzzles.length)].puzzle_date); });
-async function showResults(result) {
-  $("#results-card").classList.remove("hidden");
-  $("#result-heading").textContent = result.state === "won" ? "You got it!" : `The word was ${result.answer.toUpperCase()}.`;
-  $("#result-copy").textContent = result.state === "won" ? `Solved in ${result.guess_count} guess${result.guess_count === 1 ? "" : "es"}.` : "Tomorrow brings a fresh word.";
-  const { data } = await supabase.rpc("get_puzzle_stats", { p_puzzle_id:puzzle.id }); const stats = data?.[0] || {};
-  $("#stats").innerHTML = [[stats.players || 0,"players"],[stats.solved || 0,"solved"],[stats.average_guesses || "—","avg. guesses"]].map(([value,label]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join("");
-}
 $("#play-again").addEventListener("click", () => $("#game-card").scrollIntoView({ behavior:"smooth" }));
-loadDictionary();
-loadAvailablePuzzles();
-loadToday();
+$("#other-games-button").addEventListener("click", loadOtherGames);
+async function start() {
+  try { await authenticate(); await Promise.all([loadDictionary(), loadAvailablePuzzles()]); await loadToday(); }
+  catch { $("#subtitle").textContent = "The private game session could not start. Please refresh."; }
+}
+start();
