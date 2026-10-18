@@ -116,7 +116,10 @@ async function loadOtherGames() {
   const button = $("#other-games-button"); button.disabled = true;
   const { data, error } = await supabase.rpc("get_completed_boards", { p_puzzle_id:puzzle.id }); button.disabled = false;
   if (error) {
-    $("#other-boards").innerHTML = `<p class="empty-boards">Other completed games are not available yet. Please refresh the page after the database upgrade has been run.</p>`;
+    const reason = error.message === "Finish this puzzle first."
+      ? "Finish this puzzle on this browser first, then try again."
+      : `The shared-board request failed: ${error.message}`;
+    $("#other-boards").innerHTML = `<p class="empty-boards">${reason}</p>`;
     $("#other-games").classList.remove("hidden");
     return;
   }
