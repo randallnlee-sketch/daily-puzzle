@@ -3,11 +3,14 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const supabase = createClient("https://pguyhknljcrnwoidhlzp.supabase.co", "sb_publishable_hi_rSiAXwQqOqhaXsryUHw_pMu5f35I");
 const $ = (selector) => document.querySelector(selector);
 const keyboardRows = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
+const puzzleWords = new Set("xylyl glyph nymph kudzu whomp whoop mooch foggy zippy piezo phono poppy knock chomp gonzo jumpy fjord whizz psych kazoo slunk stank tacky wacky bawdy cliff bongo mambo kabob hokum hooch goofy chunk prawn funky fungi feign gnome bugle bundt pylon rotor bogus mogul nexus emcee cajun blood cajon axiom cacti eerie azure frown thumb quiet quite boxer clown zebra moxie toxic motif shoed lunch vault guide scalp chair fight rough rogue helix tenor essay gamma vexed party neigh eight marsh cache moist posit evade tread adder melee penal cease orate snipe plait shirt worst horse usual empty apply gleek sitar cower waste".split(" "));
 const playerId = localStorage.playerId || crypto.randomUUID();
 let puzzle;
 let currentRows = [];
 let activeGuess = "";
 let availablePuzzles = [];
+let validWords = new Set();
+let dictionaryReady = false;
 localStorage.playerId = playerId;
 
 function letterStates(rows = []) {
@@ -35,6 +38,17 @@ function redraw() { drawBoard(); drawKeyboard(); }
 function showMessage(text, error = false) { const el = $("#message"); el.textContent = text; el.classList.toggle("error", error); }
 function setKeyboardDisabled(disabled) { document.querySelectorAll("#game-keyboard button").forEach((button) => { button.disabled = disabled; }); }
 function localDate(date) { return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric" }); }
+async function loadDictionary() {
+  try {
+    const response = await fetch("valid-words.txt");
+    if (!response.ok) throw new Error("Dictionary unavailable");
+    validWords = new Set((await response.text()).split(/\r?\n/).map((word) => word.trim().toLowerCase()).filter(Boolean));
+    puzzleWords.forEach((word) => validWords.add(word));
+    dictionaryReady = true;
+  } catch {
+    showMessage("The word list could not load. Please refresh and try again.", true);
+  }
+}
 
 async function loadAvailablePuzzles() {
   const { data } = await supabase.rpc("get_available_puzzles");
@@ -64,6 +78,8 @@ async function loadDate(date) {
 }
 async function submitGuess() {
   if (activeGuess.length !== 5) return showMessage("Enter five letters first.", true);
+  if (!dictionaryReady) return showMessage("Loading the word list…", true);
+  if (!validWords.has(activeGuess)) return showMessage("That isn’t in the word list.", true);
   setKeyboardDisabled(true); showMessage("");
   const { data, error } = await supabase.rpc("submit_guess", { p_puzzle_id:puzzle.id, p_player_id:playerId, p_player_name:"Player", p_guess:activeGuess });
   setKeyboardDisabled(false);
@@ -98,5 +114,6 @@ async function showResults(result) {
   $("#stats").innerHTML = [[stats.players || 0,"players"],[stats.solved || 0,"solved"],[stats.average_guesses || "—","avg. guesses"]].map(([value,label]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join("");
 }
 $("#play-again").addEventListener("click", () => $("#game-card").scrollIntoView({ behavior:"smooth" }));
+loadDictionary();
 loadAvailablePuzzles();
 loadToday();
