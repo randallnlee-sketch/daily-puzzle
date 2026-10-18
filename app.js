@@ -115,7 +115,11 @@ async function showResults(result) {
 async function loadOtherGames() {
   const button = $("#other-games-button"); button.disabled = true;
   const { data, error } = await supabase.rpc("get_completed_boards", { p_puzzle_id:puzzle.id }); button.disabled = false;
-  if (error) return;
+  if (error) {
+    $("#other-boards").innerHTML = `<p class="empty-boards">Other completed games are not available yet. Please refresh the page after the database upgrade has been run.</p>`;
+    $("#other-games").classList.remove("hidden");
+    return;
+  }
   $("#other-boards").innerHTML = data?.length
     ? data.map((game) => `<article class="shared-game"><p>${game.state === "won" ? `Solved in ${game.guess_count} guess${game.guess_count === 1 ? "" : "es"}` : "Did not solve"}</p>${boardMarkup(game.rows, "shared-board")}</article>`).join("")
     : `<p class="empty-boards">No other completed games yet.</p>`;
